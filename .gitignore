@@ -1,0 +1,21 @@
+data/
+layoutlm_finetuned/
+*.jsonl
+__pycache__/
+*.pyc
+venv/
+env/
+.env
+.ipynb_checkpoints/
+.pytest_cache/
+.vscode/
+.idea/
+.DS_Store
+
+# NOTE: data/ and layoutlm_finetuned/ are intentionally excluded.
+# data/ (626 receipt images, ~350MB) is fetched fresh from the source
+# repo, not versioned here. layoutlm_finetuned/ (the fine-tuned model)
+# is a build artifact, not source — regenerate via train_layoutlm.py.
+# The *.jsonl files (labeled_lines, layoutlm_train/test) are derived
+# from data/ by prepare_labels.py/prepare_layoutlm_data.py — cheap to
+# regenerate, no reason to version large derived files either.

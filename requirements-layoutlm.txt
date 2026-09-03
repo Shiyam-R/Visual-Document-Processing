@@ -1,0 +1,6 @@
+transformers==4.47.1
+torch==2.5.1
+datasets==3.2.0
+scikit-learn==1.6.0
+pillow==11.0.0
+pytesseract==0.3.13
