@@ -19,6 +19,7 @@ Run:
 """
 
 import json
+import os
 
 import numpy as np
 from datasets import Dataset
@@ -34,7 +35,13 @@ MODEL_NAME = "microsoft/layoutlm-base-uncased"
 LABEL_LIST = ["other", "company", "date", "total", "address"]
 NUM_LABELS = len(LABEL_LIST)
 OUTPUT_DIR = "layoutlm_finetuned"
-MAX_LENGTH = 512
+# 512 was arbitrary and badly oversized — real data check (see training
+# history) showed max word count is 240 across the whole training set,
+# p95 is only 177. 384 covers every receipt with margin, including the
+# tail cases where `total` sits at 87-91% through the sequence (verified
+# directly — an aggressive cut here would have silently truncated exactly
+# the field being predicted, on the longest receipts specifically).
+MAX_LENGTH = 384
 
 
 def load_jsonl(path: str) -> list[dict]:
@@ -48,15 +55,20 @@ def prepare_dataset(records: list[dict]) -> Dataset:
 
 def tokenize_and_align(examples, tokenizer):
     """
-    Standard HF token-classification alignment: a word can split into
-    multiple sub-word tokens. Only the FIRST sub-token of each word gets
-    the real label; continuation sub-tokens and special tokens ([CLS],
-    [SEP], padding) get -100, which PyTorch's loss functions are
-    configured to ignore automatically.
+    LayoutLM v1's tokenizer is a plain BERT tokenizer — it has NO concept
+    of boxes (unlike LayoutLMv2/v3, where passing boxes=... directly into
+    the tokenizer call is supported). Boxes must be aligned to sub-word
+    tokens manually here, via word_ids(), and passed to the MODEL as a
+    separate `bbox` input — the model's forward() does accept `bbox`,
+    it's just never built by the tokenizer for v1.
+
+    Same word_ids-based alignment as labels: continuation sub-tokens
+    inherit their word's real box (not a zero box — they're still
+    physically located there); only true special/padding tokens (word_idx
+    is None) get the [0,0,0,0] placeholder.
     """
     tokenized = tokenizer(
         examples["words"],
-        boxes=examples["boxes"],
         truncation=True,
         padding="max_length",
         max_length=MAX_LENGTH,
@@ -64,21 +76,31 @@ def tokenize_and_align(examples, tokenizer):
     )
 
     all_labels = []
-    for i, labels in enumerate(examples["labels"]):
+    all_bboxes = []
+    for i in range(len(examples["labels"])):
+        labels = examples["labels"][i]
+        boxes = examples["boxes"][i]
         word_ids = tokenized.word_ids(batch_index=i)
-        label_ids = []
+
+        label_ids, bbox_ids = [], []
         previous_word_idx = None
         for word_idx in word_ids:
             if word_idx is None:
                 label_ids.append(-100)
+                bbox_ids.append([0, 0, 0, 0])
             elif word_idx != previous_word_idx:
                 label_ids.append(labels[word_idx])
+                bbox_ids.append(boxes[word_idx])
             else:
                 label_ids.append(-100)
+                bbox_ids.append(boxes[word_idx])
             previous_word_idx = word_idx
+
         all_labels.append(label_ids)
+        all_bboxes.append(bbox_ids)
 
     tokenized["labels"] = all_labels
+    tokenized["bbox"] = all_bboxes
     return tokenized
 
 
@@ -132,14 +154,21 @@ if __name__ == "__main__":
         remove_columns=["receipt_id", "words", "boxes"],
     )
 
-    # Small dataset (533 receipts) needs several epochs; batch size kept
-    # small assuming CPU training in Codespaces — raise it if a GPU is
-    # available (check with `python -c "import torch; print(torch.cuda.is_available())"`).
+    # Previous run: batch=4, length=512 -> OOM-killed by the OS after one
+    # 50s step, with a 27h57m ETA even if it hadn't crashed. Fixed here:
+    # - length 512->384 (justified above, ~44% less attention compute)
+    # - batch 4->2 WITH gradient_accumulation_steps=2, so the EFFECTIVE
+    #   batch size stays 4 (same training dynamics as before) while peak
+    #   memory per forward/backward pass roughly halves — this is what
+    #   actually fixes the OOM, not just a smaller number picked at random
+    # - epochs 15->5: get a first real result quickly; extend once this
+    #   is confirmed working rather than guessing at 15 epochs blind
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
-        num_train_epochs=15,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
+        num_train_epochs=5,
+        per_device_train_batch_size=2,
+        per_device_eval_batch_size=2,
+        gradient_accumulation_steps=2,
         learning_rate=3e-5,
         eval_strategy="epoch",
         save_strategy="epoch",
@@ -157,7 +186,23 @@ if __name__ == "__main__":
     )
 
     print("Starting fine-tuning...")
-    trainer.train()
+
+    # Resume from the last saved checkpoint if one exists — critical for
+    # long CPU training runs that can get killed (Codespaces idle timeout
+    # suspends the environment based on editor/browser activity, NOT
+    # whether a background process is still running — a long unattended
+    # training job is exactly what trips this). Without this, an
+    # interrupted run loses all completed epochs and starts over blind.
+    last_checkpoint = None
+    if os.path.isdir(OUTPUT_DIR):
+        checkpoints = [d for d in os.listdir(OUTPUT_DIR) if d.startswith("checkpoint-")]
+        if checkpoints:
+            last_checkpoint = os.path.join(
+                OUTPUT_DIR, sorted(checkpoints, key=lambda x: int(x.split("-")[1]))[-1]
+            )
+            print(f"Found existing checkpoint — resuming from: {last_checkpoint}")
+
+    trainer.train(resume_from_checkpoint=last_checkpoint)
 
     print("\nFinal evaluation:")
     print(trainer.evaluate())

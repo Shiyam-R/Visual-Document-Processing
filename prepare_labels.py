@@ -60,6 +60,20 @@ def parse_box_csv(path: Path) -> list[dict]:
 
 
 def match_single_line(target: str, ocr_lines: list[dict], threshold: int) -> tuple[int | None, int]:
+    """
+    partial_ratio's "find target embedded in a longer line" logic ONLY
+    makes sense when the candidate line is the longer side. When the line
+    is SHORTER than the target, it can only be a fragment of it, not a
+    container — using partial_ratio there lets a short coincidental
+    substring score a perfect 100 even when it explains almost none of
+    the target (real bug found: "TAMAN DAYA," — an address fragment —
+    beat the true company line "BOOK TA .K(TAMAN DAYA) SDN BHD" 100 to
+    95, because the company name happens to reference the same place).
+    ratio() correctly penalizes the length mismatch in that direction
+    instead, while partial_ratio is still used (correctly) for the
+    legitimate case of a short target embedded in a longer descriptive
+    line (e.g. "9.00" inside "Rounded Total (RM): 9.00").
+    """
     target_norm = normalize(target)
     if not target_norm:
         return None, 0
@@ -68,7 +82,10 @@ def match_single_line(target: str, ocr_lines: list[dict], threshold: int) -> tup
         line_norm = normalize(line["text"])
         if len(line_norm) < MIN_CANDIDATE_LENGTH:
             continue
-        score = fuzz.partial_ratio(target_norm, line_norm)
+        if len(line_norm) >= len(target_norm):
+            score = fuzz.partial_ratio(target_norm, line_norm)
+        else:
+            score = fuzz.ratio(target_norm, line_norm)
         if score > best_score:
             best_score, best_idx = score, i
     return (best_idx, best_score) if best_score >= threshold else (None, best_score)
@@ -109,7 +126,25 @@ def label_receipt(receipt_id: str) -> tuple[list[dict], dict]:
         if idx is not None:
             if idx not in claims or score > claims[idx][1]:
                 claims[idx] = (field, score)
-            match_report[field] = f"matched (score={score})"
+            match_report[field] = f"matched single-line (score={score})"
+        elif field == "company":
+            # Company names can wrap across lines (e.g. "POPULAR BOOK CO.
+            # (M) SDN BHD" split across 2-3 lines) — single-line matching
+            # can never find these even in principle, since no one line
+            # contains more than a fragment. Fall back to the same
+            # multi-line window matching address uses.
+            rng, ml_score = match_multi_line(key[field], ocr_lines, MULTI_LINE_THRESHOLD, MAX_ADDRESS_WINDOW)
+            if rng is not None:
+                # Claim only the first line of the range through the
+                # existing single-claim-per-field mechanism, then mark
+                # the rest directly below (company can span >1 line,
+                # same as address does).
+                for i in range(rng[0], rng[1]):
+                    if i not in claims or ml_score > claims[i][1]:
+                        claims[i] = (field, ml_score)
+                match_report[field] = f"matched multi-line {rng} (score={ml_score})"
+            else:
+                match_report[field] = f"NO MATCH (best single-line={score}, best multi-line={ml_score})"
         else:
             match_report[field] = f"NO MATCH (best score={score})"
 

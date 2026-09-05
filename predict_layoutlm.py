@@ -29,7 +29,7 @@ from transformers import AutoModelForTokenClassification, AutoTokenizer
 
 MODEL_DIR = "layoutlm_finetuned"
 LABEL_LIST = ["other", "company", "date", "total", "address"]
-MAX_LENGTH = 512
+MAX_LENGTH = 384  # must match train_layoutlm.py's value
 MIN_CONFIDENCE = 0.5  # below this, a field is reported but flagged low-confidence
 
 
@@ -70,13 +70,20 @@ def predict(image_path: str) -> dict:
         return {"error": "No text detected by OCR", "fields": {}}
 
     encoding = tokenizer(
-        words, boxes=boxes, truncation=True, padding="max_length",
+        words, truncation=True, padding="max_length",
         max_length=MAX_LENGTH, is_split_into_words=True, return_tensors="pt",
     )
     word_ids = encoding.word_ids(batch_index=0)
 
+    # Same manual alignment as training — LayoutLM v1's tokenizer doesn't
+    # accept boxes directly; build the bbox tensor ourselves.
+    bbox_ids = []
+    for word_idx in word_ids:
+        bbox_ids.append([0, 0, 0, 0] if word_idx is None else boxes[word_idx])
+    bbox_tensor = torch.tensor([bbox_ids])
+
     with torch.no_grad():
-        outputs = model(**encoding)
+        outputs = model(**encoding, bbox=bbox_tensor)
         probs = torch.softmax(outputs.logits, dim=-1)[0]  # (seq_len, num_labels)
         pred_ids = torch.argmax(probs, dim=-1)
 
