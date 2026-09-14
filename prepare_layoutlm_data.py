@@ -1,24 +1,25 @@
 """
 prepare_layoutlm_data.py — Project 4 (Visual Document Processing)
 
-Converts labeled_lines.jsonl (line-level labels from prepare_labels.py)
-into word-level (word, normalized_bbox, label) records — what LayoutLM
-actually consumes.
+CHANGED from the original version: each word in a line now gets a
+PROPORTIONALLY SPLIT box (by character length) instead of the full
+line's box duplicated across every word.
 
-Two documented simplifications, not silently baked in:
-1. box.csv gives LINE-level bounding boxes, not word-level. Each word in
-   a line is assigned that LINE's box — an approximation (LayoutLM would
-   ideally get each word's own tight box), acceptable given this is the
-   granularity the source data provides.
-2. Flat label scheme (O/COMPANY/DATE/TOTAL/ADDRESS), not BIO tagging.
-   Justified because each receipt has at most one instance of each field
-   (no repeated/interleaved entities to disambiguate) — BIO's B-/I-
-   distinction exists to separate consecutive-but-distinct entity
-   instances, which doesn't happen here.
-
-Boxes normalized to LayoutLM's expected 0-1000 scale using each image's
-OWN width/height (verified these vary significantly across receipts —
-a fixed constant would silently corrupt every box).
+Why this matters, concretely: box.csv only gives LINE-level boxes, so
+the original approach gave every word in a line the identical box. For
+a company name that's a single wide line (very common — spans most of
+the page width), every training example the model saw for "company" was
+paired with one wide, IDENTICAL box shape. At real inference, Tesseract
+gives each word its own much narrower individual box. The model likely
+learned to associate "company" specifically with that wide shared-box
+shape, not with narrow individual-word boxes — evidenced by: a genuine
+TRAINING receipt still failing at 0.999 certainty on real inference
+(ruling out a plain generalization gap), while multi-line fields like
+address (which get naturally diverse box shapes across their several
+lines even under the old approach) worked fine. This isn't a perfect
+fix (character-length is an approximation — doesn't account for
+variable glyph widths or spacing), but it's much closer to Tesseract's
+real distribution than one identical box per line.
 """
 
 import json
@@ -48,6 +49,26 @@ def normalize_box(x_min, y_min, x_max, y_max, width, height):
     ]
 
 
+def split_line_box_by_words(words_in_line, x_min, x_max, y_min, y_max):
+    """
+    Proportionally splits a line's box across its words by character
+    length. See module docstring for why this replaced giving every
+    word in a line the identical full-line box.
+    """
+    if not words_in_line:
+        return []
+    total_chars = sum(len(w) for w in words_in_line) or 1
+    line_width = x_max - x_min
+    boxes = []
+    cursor = x_min
+    for w in words_in_line:
+        word_width = line_width * (len(w) / total_chars)
+        word_x_max = cursor + word_width
+        boxes.append((cursor, y_min, word_x_max, y_max))
+        cursor = word_x_max
+    return boxes
+
+
 def build_receipt_record(receipt_id: str, lines: list[dict]) -> dict:
     img_path = DATA_DIR / "img" / f"{receipt_id}.jpg"
     with Image.open(img_path) as img:
@@ -55,8 +76,12 @@ def build_receipt_record(receipt_id: str, lines: list[dict]) -> dict:
 
     words, boxes, labels = [], [], []
     for line in lines:
-        box_norm = normalize_box(line["x_min"], line["y_min"], line["x_max"], line["y_max"], width, height)
-        for word in line["text"].split():
+        line_words = line["text"].split()
+        word_boxes = split_line_box_by_words(
+            line_words, line["x_min"], line["x_max"], line["y_min"], line["y_max"]
+        )
+        for word, (wx_min, wy_min, wx_max, wy_max) in zip(line_words, word_boxes, strict=True):
+            box_norm = normalize_box(wx_min, wy_min, wx_max, wy_max, width, height)
             words.append(word)
             boxes.append(box_norm)
             labels.append(LABEL_TO_ID[line["label"]])
@@ -100,5 +125,4 @@ if __name__ == "__main__":
 
     total_words = sum(len(r["words"]) for r in all_records)
     print(f"Total words across dataset: {total_words}")
-    avg_words = total_words / len(all_records)
-    print(f"Average words per receipt: {avg_words:.1f}")
+    print(f"Average words per receipt: {total_words / len(all_records):.1f}")

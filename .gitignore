@@ -1,7 +1,6 @@
 data/
-layoutlm_finetuned/
-*.jsonl
 __pycache__/
+layoutlm_finetuned/
 *.pyc
 venv/
 env/
