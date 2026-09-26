@@ -1,0 +1,9 @@
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+sqlalchemy==2.0.52
+psycopg2-binary==2.9.13
+pillow==12.1.1
+pytesseract==0.3.13
+torch==2.14.0
+transformers==4.47.1
