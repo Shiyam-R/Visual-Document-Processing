@@ -1,0 +1,76 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # lets you manually trigger the full pipeline, including the Docker build below
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      # Deliberately NO `lfs: true` here — lint doesn't need the model
+      # file, and skipping the LFS smudge on this every-push job is
+      # exactly what keeps routine commits from consuming LFS bandwidth.
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check app/ --output-format=github
+
+  docker-build-and-push:
+    runs-on: ubuntu-latest
+    needs: lint
+    # MANUAL TRIGGER ONLY. This job pulls the ~450MB LFS model file —
+    # running it on every push would very likely exhaust the free
+    # 1GB/month LFS bandwidth quota within just 2 pushes. Trigger it
+    # deliberately from the Actions tab ("Run workflow") when you
+    # actually want a new image built, not automatically.
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true  # REQUIRED — without this, layoutlm_finetuned/ contains
+                     # only LFS pointer stubs (~130 bytes of text), not the
+                     # real file, and the image would silently ship a
+                     # broken model that fails at load time inside the container.
+
+      - name: Verify the LFS file was actually pulled, not left as a pointer stub
+        run: |
+          SIZE=$(stat -c%s layoutlm_finetuned/model.safetensors)
+          echo "model.safetensors size: $SIZE bytes"
+          if [ "$SIZE" -lt 100000000 ]; then
+            echo "ERROR: model.safetensors is suspiciously small (${SIZE} bytes) — likely an LFS pointer stub, not the real 450MB file. Aborting before building a broken image."
+            exit 1
+          fi
+
+      - name: Set lowercase image name
+        run: echo "IMAGE_NAME=$(echo ghcr.io/${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}

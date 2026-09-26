@@ -1,0 +1,29 @@
+.git
+.gitattributes
+.gitignore
+venv/
+__pycache__/
+*.pyc
+.env
+*.md
+.vscode/
+.idea/
+local_dev.db
+
+# Training-only files — never needed in the serving image. The API only
+# needs app/, layoutlm_finetuned/, and requirements-api.txt.
+data/
+prepare_labels.py
+prepare_layoutlm_data.py
+train_layoutlm.py
+train_xgboost_baseline.py
+plain_ocr_baseline.py
+predict_baseline.py
+predict_layoutlm.py
+debug_predict.py
+audit_company_predictions.py
+requirements-layoutlm.txt
+xgboost_baseline.json
+labeled_lines.jsonl
+layoutlm_train.jsonl
+layoutlm_test.jsonl
