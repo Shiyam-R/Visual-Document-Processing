@@ -7,7 +7,6 @@ needing Render connectivity for basic development.
 """
 
 import os
-from pathlib import Path
 
 API_TITLE = "Visual Document Processing API"
 API_VERSION = "1.0.0"

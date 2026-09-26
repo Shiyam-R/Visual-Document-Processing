@@ -16,6 +16,7 @@ env/
 train.log
 train.pid
 xgboost_baseline.json
+.ruff_cache/
 
 # NOTE: data/ and layoutlm_finetuned/ are intentionally excluded.
 # data/ (626 receipt images, ~350MB) is fetched fresh from the source

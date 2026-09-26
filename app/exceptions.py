@@ -6,11 +6,10 @@ exception carries its own HTTP status code so main.py's handler can
 return a consistent structured JSON error.
 """
 
-from typing import Optional
 
 
 class DocumentAPIError(Exception):
-    def __init__(self, message: str, status_code: int = 500, detail: Optional[str] = None) -> None:
+    def __init__(self, message: str, status_code: int = 500, detail: str | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code

@@ -7,14 +7,13 @@ a result we already validated works.
 """
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
 
 
 class FieldResult(BaseModel):
-    value: Optional[str]
-    confidence: Optional[float]
+    value: str | None
+    confidence: float | None
     flag: str  # "ok" | "low_confidence" | "not_found"
 
 

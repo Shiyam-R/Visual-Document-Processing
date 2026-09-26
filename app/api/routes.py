@@ -9,6 +9,7 @@ import io
 from fastapi import APIRouter, Depends, File, UploadFile
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -53,6 +54,6 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
     try:
         db.execute(text("SELECT 1"))
         db_ok = True
-    except Exception:
+    except SQLAlchemyError:
         db_ok = False
     return HealthResponse(status="ok", model_loaded=artifacts.loaded, database_connected=db_ok)
