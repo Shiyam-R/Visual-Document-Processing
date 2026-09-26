@@ -1,0 +1,2 @@
+layoutlm_finetuned/*.safetensors filter=lfs diff=lfs merge=lfs -text
+layoutlm_finetuned/*.bin filter=lfs diff=lfs merge=lfs -text
