@@ -10,6 +10,9 @@ env/
 .vscode/
 .idea/
 .DS_Store
+train.log
+train.pid
+xgboost_baseline.json
 
 # NOTE: data/ and layoutlm_finetuned/ are intentionally excluded.
 # data/ (626 receipt images, ~350MB) is fetched fresh from the source
