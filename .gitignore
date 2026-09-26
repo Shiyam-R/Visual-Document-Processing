@@ -1,6 +1,9 @@
 data/
 __pycache__/
-layoutlm_finetuned/
+layoutlm_finetuned/checkpoint-*/
+layoutlm_finetuned/*.bin
+layoutlm_finetuned/*.pt
+layoutlm_finetuned/*.pth
 *.pyc
 venv/
 env/
